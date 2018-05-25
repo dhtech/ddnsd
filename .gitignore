@@ -1,0 +1,6 @@
+*.crt
+*.key
+.*.swp
+.*.swo
+ddnsd
+ddnsd.exe
