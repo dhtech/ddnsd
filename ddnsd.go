@@ -54,7 +54,9 @@ type dnsServer struct {
 	secret *ddnsSecret
 }
 
-func recordsToRr(records []*pb.Record) ([]dns.RR, error) {
+func (s *dnsServer) dnsInsertRequest(soa string, records []*pb.Record) (*dns.Msg, error) {
+	m := new(dns.Msg)
+	m.SetUpdate(soa)
 	rrs := []dns.RR{}
 	for _, record := range records {
 		rrtype, ok := dns.StringToType[record.Type]
@@ -76,16 +78,6 @@ func recordsToRr(records []*pb.Record) ([]dns.RR, error) {
 		log.Printf("RR: %v", rr)
 		rrs = append(rrs, rr)
 	}
-	return rrs, nil
-}
-
-func (s *dnsServer) dnsInsertRequest(soa string, records []*pb.Record) (*dns.Msg, error) {
-	m := new(dns.Msg)
-	m.SetUpdate(soa)
-	rrs, err := recordsToRr(records)
-	if err != nil {
-		return nil, err
-	}
 	m.Insert(rrs)
 	return m, nil
 }
@@ -93,11 +85,24 @@ func (s *dnsServer) dnsInsertRequest(soa string, records []*pb.Record) (*dns.Msg
 func (s *dnsServer) dnsRemoveRequest(soa string, records []*pb.Record) (*dns.Msg, error) {
 	m := new(dns.Msg)
 	m.SetUpdate(soa)
-	rrs, err := recordsToRr(records)
-	if err != nil {
-		return nil, err
+	rrs := []dns.RR{}
+	for _, record := range records {
+		rrtype, ok := dns.StringToType[record.Type]
+		if !ok {
+			return nil, fmt.Errorf("unknown type %s", record.Type)
+		}
+		class, _ := dns.StringToClass["ANY"]
+		h := dns.RR_Header{Name: record.Domain, Rrtype: rrtype, Class: class, Ttl: 0}
+		rr, err := dns.NewRR(h.String())
+		if err != nil {
+			return nil, err
+		}
+
+		log.Printf("Record: %v", record)
+		log.Printf("RR: %v", rr)
+		rrs = append(rrs, rr)
 	}
-	m.Remove(rrs)
+	m.RemoveRRset(rrs)
 	return m, nil
 }
 
