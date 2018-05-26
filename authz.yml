@@ -1,0 +1,11 @@
+role:
+  - regex:
+      - '_acme-challenge\..*\.event\.dreamhack\.se'
+    type:
+      - TXT
+    match_subject:
+      commonname: bluecmd
+      organizationalunit:
+        - Kubernetes
+      organization:
+        - cn=services-team,ou=groups,ou=services,dc=event,dc=dreamhack,dc=se

@@ -4,19 +4,23 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
 	"os"
+	"regexp"
+	"strings"
 
+	pb "github.com/dhtech/proto/dns"
 	"github.com/miekg/dns"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	// "google.golang.org/grpc/peer"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/reflection"
-	pb "github.com/dhtech/proto/dns"
+	"gopkg.in/yaml.v2"
 )
 
 var (
@@ -25,16 +29,25 @@ var (
 	trustedClientCa  = flag.String("trusted_client_ca", "client_ca.crt", "Trusted client CA")
 	listen           = flag.String("listen", "[::]:443", "Address to listen on GRPC")
 	targetServer     = flag.String("target_server", "localhost:53", "Where to send DNS requests")
-	authzConfig      = flag.String("authz_config", "authz.yml", "Authorization config")
+	authzConfigFile  = flag.String("authz_config", "authz.yml", "Authorization config")
 	ddnsSecret       = flag.String("ddns_secret", "ddns.key", "Key file to authenticate with")
 )
 
-type dnsServer struct {
+type role struct {
+	Regex        []string
+	Type         []string
+	MatchSubject pkix.Name `yaml:"match_subject"`
 }
 
-func (s *dnsServer) dnsInsertRequest(soa string, records []*pb.Record) (*dns.Msg, error) {
-	m := new(dns.Msg)
-	m.SetUpdate(soa)
+type authzConfig struct {
+	Role []role
+}
+
+type dnsServer struct {
+	config *authzConfig
+}
+
+func recordsToRr(records []*pb.Record) ([]dns.RR, error) {
 	rrs := []dns.RR{}
 	for _, record := range records {
 		rrtype, ok := dns.StringToType[record.Type]
@@ -56,27 +69,138 @@ func (s *dnsServer) dnsInsertRequest(soa string, records []*pb.Record) (*dns.Msg
 		log.Printf("RR: %v", rr)
 		rrs = append(rrs, rr)
 	}
+	return rrs, nil
+}
+
+func (s *dnsServer) dnsInsertRequest(soa string, records []*pb.Record) (*dns.Msg, error) {
+	m := new(dns.Msg)
+	m.SetUpdate(soa)
+	rrs, err := recordsToRr(records)
+	if err != nil {
+		return nil, err
+	}
 	m.Insert(rrs)
 	return m, nil
 }
 
-func (s *dnsServer) Insert(ctx context.Context, r *pb.InsertRequest) (*pb.InsertResponse, error) {
+func (s *dnsServer) dnsRemoveRequest(soa string, records []*pb.Record) (*dns.Msg, error) {
+	m := new(dns.Msg)
+	m.SetUpdate(soa)
+	rrs, err := recordsToRr(records)
+	if err != nil {
+		return nil, err
+	}
+	m.Remove(rrs)
+	return m, nil
+}
+
+func listIsSubset(peer []string, of []string) bool {
+	for _, x := range of {
+		found := false
+		for _, y := range peer {
+			if y == x {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func pkixIsSubset(peer *pkix.Name, of *pkix.Name) bool {
+	if of.CommonName != "" && of.CommonName != peer.CommonName {
+		return false
+	}
+	if of.SerialNumber != "" && of.SerialNumber != peer.SerialNumber {
+		return false
+	}
+	return (
+		listIsSubset(peer.Country, of.Country) &&
+		listIsSubset(peer.Organization, of.Organization) &&
+		listIsSubset(peer.OrganizationalUnit, of.OrganizationalUnit) &&
+		listIsSubset(peer.Locality, of.Locality) &&
+		listIsSubset(peer.Province, of.Province) &&
+		listIsSubset(peer.StreetAddress, of.StreetAddress) &&
+		listIsSubset(peer.PostalCode, of.PostalCode))
+}
+
+func (s *dnsServer) authorizePeer(r *pb.Record, peer *pkix.Name) bool {
+	for _, role := range s.config.Role {
+		found := false
+		for _, t := range role.Type {
+			if strings.ToLower(t) == strings.ToLower(r.Type) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+
+		found = false
+		for _, regex := range role.Regex {
+			m, err := regexp.MatchString(regex, r.Domain)
+			if err != nil {
+				log.Printf("Regex failure on %s: %v", regex, err)
+				continue
+			}
+			if m {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+		if pkixIsSubset(peer, &role.MatchSubject) {
+			log.Printf("Role matches: %v", role)
+			return true
+		}
+	}
+	return false
+}
+
+func (s *dnsServer) insertOrRemove(ctx context.Context, records []*pb.Record, insert bool) error {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no peer information available")
+	}
+	ta := p.AuthInfo.(credentials.TLSInfo)
+
+	var peer pkix.Name
+	if len(ta.State.PeerCertificates) > 0 {
+		cert := ta.State.PeerCertificates[0]
+		peer = cert.Subject
+		log.Printf("Request from peer: %v", peer)
+	} else {
+		log.Printf("Request from anonymous peer")
+	}
+
 	soaMap := make(map[string][]*pb.Record)
+
+	// TODO: DNS, for testing
+	records = append(records, &pb.Record{Domain: "_acme-challenge.test.event.dreamhack.se.", Type: "TXT", Class: "IN", Ttl: 60, Data: "testar"})
 
 	// Group record requests per SOA
 	m := new(dns.Msg)
-	for _, record := range r.Record {
+	for _, record := range records {
+		if !s.authorizePeer(record, &peer) {
+			return fmt.Errorf("not authorized to execute %v", record)
+		}
 		m.SetQuestion(record.Domain, dns.TypeSOA)
-		r, err:= dns.Exchange(m, *targetServer)
+		r, err := dns.Exchange(m, *targetServer)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(r.Ns) == 0 {
-			return nil, fmt.Errorf("did not receive any authority for %s", record.Domain)
+			return fmt.Errorf("did not receive any authority for %s", record.Domain)
 		}
 		soa, ok := r.Ns[0].(*dns.SOA)
 		if !ok {
-			return nil, fmt.Errorf("did not receive SOA for %s", record.Domain)
+			return fmt.Errorf("did not receive SOA for %s", record.Domain)
 		}
 		log.Printf("SOA for %s: %s", record.Domain, soa.Hdr.Name)
 		soaMap[soa.Hdr.Name] = append(soaMap[soa.Hdr.Name], record)
@@ -85,9 +209,15 @@ func (s *dnsServer) Insert(ctx context.Context, r *pb.InsertRequest) (*pb.Insert
 	// Create all messages first to catch validation errors before committing anything.
 	msgs := []*dns.Msg{}
 	for soa, records := range soaMap {
-		m, err := s.dnsInsertRequest(soa, records)
+		var m *dns.Msg
+		var err error
+		if insert {
+			m, err = s.dnsInsertRequest(soa, records)
+		} else {
+			m, err = s.dnsRemoveRequest(soa, records)
+		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		log.Printf("Assembled batch to SOA %s with %d records", soa, len(records))
 		msgs = append(msgs, m)
@@ -108,13 +238,25 @@ func (s *dnsServer) Insert(ctx context.Context, r *pb.InsertRequest) (*pb.Insert
 		}
 	}
 	if len(errs) > 0 {
-		return nil, fmt.Errorf("%d operations failed", len(errs))
+		return fmt.Errorf("%d operations failed", len(errs))
+	}
+	return nil
+}
+
+func (s *dnsServer) Insert(ctx context.Context, r *pb.InsertRequest) (*pb.InsertResponse, error) {
+	err := s.insertOrRemove(ctx, r.Record, true)
+	if err != nil {
+		return nil, err
 	}
 	return &pb.InsertResponse{}, nil
 }
 
 func (s *dnsServer) Remove(ctx context.Context, r *pb.RemoveRequest) (*pb.RemoveResponse, error) {
-	return nil, fmt.Errorf("not implemented")
+	err := s.insertOrRemove(ctx, r.Record, false)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.RemoveResponse{}, nil
 }
 
 func main() {
@@ -127,6 +269,17 @@ func main() {
 	clientCa, err := ioutil.ReadFile(os.ExpandEnv(*trustedClientCa))
 	if err != nil {
 		log.Fatalf("unable to load trusted client CA: %v", err)
+	}
+
+	s := dnsServer{}
+
+	cbin, err := ioutil.ReadFile(os.ExpandEnv(*authzConfigFile))
+	if err != nil {
+		log.Fatalf("unable to load authz config: %v", err)
+	}
+	err = yaml.Unmarshal(cbin, &s.config)
+	if err != nil {
+		log.Fatalf("unable to parse authz config: %v", err)
 	}
 
 	capool := x509.NewCertPool()
@@ -142,8 +295,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("could not listen: %v", err)
 	}
-
-	s := dnsServer{}
 
 	g := grpc.NewServer(grpc.Creds(ta))
 	pb.RegisterDynamicDnsServiceServer(g, &s)
