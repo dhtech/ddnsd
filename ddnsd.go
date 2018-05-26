@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	pb "github.com/dhtech/proto/dns"
 	"github.com/miekg/dns"
@@ -30,7 +31,7 @@ var (
 	listen           = flag.String("listen", "[::]:443", "Address to listen on GRPC")
 	targetServer     = flag.String("target_server", "localhost:53", "Where to send DNS requests")
 	authzConfigFile  = flag.String("authz_config", "authz.yml", "Authorization config")
-	ddnsSecret       = flag.String("ddns_secret", "ddns.key", "Key file to authenticate with")
+	ddnsSecretFile   = flag.String("ddns_secret", "ddns.key.yml", "Key file to authenticate with")
 )
 
 type role struct {
@@ -43,8 +44,14 @@ type authzConfig struct {
 	Role []role
 }
 
+type ddnsSecret struct {
+	Zone    string
+	Private string
+}
+
 type dnsServer struct {
 	config *authzConfig
+	secret *ddnsSecret
 }
 
 func recordsToRr(records []*pb.Record) ([]dns.RR, error) {
@@ -225,16 +232,18 @@ func (s *dnsServer) insertOrRemove(ctx context.Context, records []*pb.Record, in
 
 	// Commit. If there is an error, continue with other operations and return error in the end.
 	c := &dns.Client{Net: "tcp"}
+	c.TsigSecret = map[string]string{s.secret.Zone: s.secret.Private}
 	errs := []error{}
 	for _, m := range msgs {
+		m.SetTsig(s.secret.Zone, dns.HmacSHA512, 300, time.Now().Unix())
 		r, _, err := c.Exchange(m, *targetServer)
 		if err != nil {
 			log.Printf("failed to execute insert: %v", err)
 			errs = append(errs, err)
 		}
-		if r.Opcode != dns.RcodeSuccess {
-			log.Printf("operation returned %d", r.Opcode)
-			errs = append(errs, fmt.Errorf("status %d", r.Opcode))
+		if r.Rcode != dns.RcodeSuccess {
+			log.Printf("operation returned %d", r.Rcode)
+			errs = append(errs, fmt.Errorf("status %d", r.Rcode))
 		}
 	}
 	if len(errs) > 0 {
@@ -280,6 +289,15 @@ func main() {
 	err = yaml.Unmarshal(cbin, &s.config)
 	if err != nil {
 		log.Fatalf("unable to parse authz config: %v", err)
+	}
+
+	sbin, err := ioutil.ReadFile(os.ExpandEnv(*ddnsSecretFile))
+	if err != nil {
+		log.Fatalf("unable to load ddns secret: %v", err)
+	}
+	err = yaml.Unmarshal(sbin, &s.secret)
+	if err != nil {
+		log.Fatalf("unable to parse ddns secret: %v", err)
 	}
 
 	capool := x509.NewCertPool()
