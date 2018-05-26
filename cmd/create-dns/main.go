@@ -63,7 +63,6 @@ func main() {
 			log.Printf("could not connect to %s: %v", target.Addr, err)
 			conn = nil
 		}
-		log.Printf("connected to backend %s", target.Addr)
 		break
 	}
 	if conn == nil {
