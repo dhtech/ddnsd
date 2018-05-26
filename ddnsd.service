@@ -1,0 +1,18 @@
+[Unit]
+Description=Dynamic DNS over gRPC daemon
+After=network.target
+Documentation=https://github.com/dhtech/ddnsd/
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ddnsd \
+  -authz_config=/etc/ddnsd/authz.yml \
+  -ddns_secret=/etc/ddnsd/ddns.key.yml \
+  -server_crt=/etc/ssl/certs/ddns.pem \
+  -server_key=/etc/ssl/private/ddns-key.pem \
+  -trusted_client_ca=/etc/ssl/grpc-ca.crt
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
