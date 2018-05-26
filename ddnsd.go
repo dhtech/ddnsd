@@ -188,9 +188,6 @@ func (s *dnsServer) insertOrRemove(ctx context.Context, records []*pb.Record, in
 
 	soaMap := make(map[string][]*pb.Record)
 
-	// TODO: DNS, for testing
-	records = append(records, &pb.Record{Domain: "_acme-challenge.test.event.dreamhack.se.", Type: "TXT", Class: "IN", Ttl: 60, Data: "testar"})
-
 	// Group record requests per SOA
 	m := new(dns.Msg)
 	for _, record := range records {
