@@ -16,6 +16,7 @@ import (
 	"time"
 
 	pb "github.com/dhtech/proto/dns"
+	pbacme "github.com/bluecmd/cert-manager-proto"
 	"github.com/miekg/dns"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -270,6 +271,35 @@ func (s *dnsServer) Remove(ctx context.Context, r *pb.RemoveRequest) (*pb.Remove
 	return &pb.RemoveResponse{}, nil
 }
 
+func (s *dnsServer) Present(ctx context.Context, r *pbacme.PresentRequest) (*pbacme.PresentResponse, error) {
+	record := pb.Record{
+		Domain: r.Fqdn,
+		Ttl: r.Ttl,
+		Class: "IN",
+		Type: "TXT",
+		Data: r.Value,
+	}
+	records := []*pb.Record{&record}
+	err := s.insertOrRemove(ctx, records, true)
+	if err != nil {
+		return nil, err
+	}
+	return &pbacme.PresentResponse{}, nil
+}
+
+func (s *dnsServer) CleanUp(ctx context.Context, r *pbacme.CleanUpRequest) (*pbacme.CleanUpResponse, error) {
+	record := pb.Record{
+		Domain: r.Fqdn,
+		Type: "TXT",
+	}
+	records := []*pb.Record{&record}
+	err := s.insertOrRemove(ctx, records, false)
+	if err != nil {
+		return nil, err
+	}
+	return &pbacme.CleanUpResponse{}, nil
+}
+
 func main() {
 	flag.Parse()
 
@@ -318,6 +348,7 @@ func main() {
 
 	g := grpc.NewServer(grpc.Creds(ta))
 	pb.RegisterDynamicDnsServiceServer(g, &s)
+	pbacme.RegisterAcmeDnsSolverServiceServer(g, &s)
 	reflection.Register(g)
 	g.Serve(l)
 }
