@@ -150,7 +150,7 @@ func (s *dnsServer) authorizePeer(r *pb.Record, peer *pkix.Name) bool {
 			}
 		}
 		if !found {
-			return false
+			continue
 		}
 
 		found = false
@@ -166,7 +166,7 @@ func (s *dnsServer) authorizePeer(r *pb.Record, peer *pkix.Name) bool {
 			}
 		}
 		if !found {
-			return false
+			continue
 		}
 		if pkixIsSubset(peer, &role.MatchSubject) {
 			log.Printf("Role matches: %v", role)
