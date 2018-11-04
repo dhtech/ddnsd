@@ -9,3 +9,18 @@ role:
         - Kubernetes
       organization:
         - cn=services-team,ou=groups,ou=services,dc=event,dc=dreamhack,dc=se
+  - regex:
+      - '.*event\.dreamhack\.se'
+    type:
+      - AXFR
+      - A
+      - AAAA
+      - CNAME
+      - TXT
+      - MX
+    match_subject:
+      commonname: bluecmd
+      organizationalunit:
+        - Kubernetes
+      organization:
+        - cn=services-team,ou=groups,ou=services,dc=event,dc=dreamhack,dc=se

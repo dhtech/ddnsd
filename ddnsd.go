@@ -255,6 +255,67 @@ func (s *dnsServer) insertOrRemove(ctx context.Context, records []*pb.Record, in
 	return nil
 }
 
+func (s *dnsServer) getZoneRecords(ctx context.Context, zone string) ([]*pb.Record, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return []*pb.Record{}, fmt.Errorf("no peer information available")
+	}
+	ta := p.AuthInfo.(credentials.TLSInfo)
+
+	var peer pkix.Name
+	if len(ta.State.PeerCertificates) > 0 {
+		cert := ta.State.PeerCertificates[0]
+		peer = cert.Subject
+		log.Printf("Request from peer: %v", peer)
+	} else {
+		log.Printf("Request from anonymous peer")
+	}
+
+	if !s.authorizePeer(&pb.Record{Domain: zone, Type: "AXFR"}, &peer) {
+		return []*pb.Record{}, fmt.Errorf("not authorized to transfer zone")
+	}
+
+	t := new(dns.Transfer)
+	t.TsigSecret = map[string]string{s.secret.Zone: s.secret.Private}
+
+	m := new(dns.Msg)
+	m.SetAxfr(zone)
+	m.SetTsig(s.secret.Zone, dns.HmacSHA512, 300, time.Now().Unix())
+	c, err := t.In(m, *targetServer)
+	if err != nil {
+		return []*pb.Record{}, err
+	}
+	res := []*pb.Record{}
+	for rrs := range c {
+		if rrs.Error != nil {
+			return []*pb.Record{}, rrs.Error
+		}
+		for _, r := range rrs.RR {
+			hdr := r.Header()
+			h := hdr.String()
+			data := r.String()[len(h):]
+			cls, ok := dns.ClassToString[hdr.Class]
+			if !ok {
+				log.Printf("Unknown class %v on %s, skipping record", hdr.Class, hdr.Name)
+				continue
+			}
+			typ, ok := dns.TypeToString[hdr.Rrtype]
+			if !ok {
+				log.Printf("Unknown type %v on %s, skipping record", hdr.Rrtype, hdr.Name)
+				continue
+			}
+			res = append(res, &pb.Record{
+				Domain: hdr.Name,
+				Ttl: hdr.Ttl,
+				Class: cls,
+				Type: typ,
+				Data: data,
+			})
+		}
+	}
+	return res, nil
+}
+
 func (s *dnsServer) Insert(ctx context.Context, r *pb.InsertRequest) (*pb.InsertResponse, error) {
 	err := s.insertOrRemove(ctx, r.Record, true)
 	if err != nil {
@@ -269,6 +330,14 @@ func (s *dnsServer) Remove(ctx context.Context, r *pb.RemoveRequest) (*pb.Remove
 		return nil, err
 	}
 	return &pb.RemoveResponse{}, nil
+}
+
+func (s *dnsServer) GetZone(ctx context.Context, r *pb.GetZoneRequest) (*pb.GetZoneResponse, error) {
+	records, err := s.getZoneRecords(ctx, r.Zone)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GetZoneResponse{Record: records}, nil
 }
 
 func (s *dnsServer) Present(ctx context.Context, r *pbacme.PresentRequest) (*pbacme.PresentResponse, error) {
