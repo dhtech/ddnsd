@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/dhtech/proto/dns"
 	pbacme "github.com/bluecmd/cert-manager-proto"
+	pb "github.com/dhtech/proto/dns"
 	"github.com/miekg/dns"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -26,13 +26,13 @@ import (
 )
 
 var (
-	serverCert       = flag.String("server_crt", "server.crt", "Server HTTPS certificate")
-	serverKey        = flag.String("server_key", "server.key", "Server HTTPS certificate key")
-	trustedClientCa  = flag.String("trusted_client_ca", "client_ca.crt", "Trusted client CA")
-	listen           = flag.String("listen", "[::]:443", "Address to listen on GRPC")
-	targetServer     = flag.String("target_server", "localhost:53", "Where to send DNS requests")
-	authzConfigFile  = flag.String("authz_config", "authz.yml", "Authorization config")
-	ddnsSecretFile   = flag.String("ddns_secret", "ddns.key.yml", "Key file to authenticate with")
+	serverCert      = flag.String("server_crt", "server.crt", "Server HTTPS certificate")
+	serverKey       = flag.String("server_key", "server.key", "Server HTTPS certificate key")
+	trustedClientCa = flag.String("trusted_client_ca", "client_ca.crt", "Trusted client CA")
+	listen          = flag.String("listen", "[::]:443", "Address to listen on GRPC")
+	targetServer    = flag.String("target_server", "localhost:53", "Where to send DNS requests")
+	authzConfigFile = flag.String("authz_config", "authz.yml", "Authorization config")
+	ddnsSecretFile  = flag.String("ddns_secret", "ddns.key.yml", "Key file to authenticate with")
 )
 
 type role struct {
@@ -130,8 +130,7 @@ func pkixIsSubset(peer *pkix.Name, of *pkix.Name) bool {
 	if of.SerialNumber != "" && of.SerialNumber != peer.SerialNumber {
 		return false
 	}
-	return (
-		listIsSubset(peer.Country, of.Country) &&
+	return (listIsSubset(peer.Country, of.Country) &&
 		listIsSubset(peer.Organization, of.Organization) &&
 		listIsSubset(peer.OrganizationalUnit, of.OrganizationalUnit) &&
 		listIsSubset(peer.Locality, of.Locality) &&
@@ -306,10 +305,10 @@ func (s *dnsServer) getZoneRecords(ctx context.Context, zone string) ([]*pb.Reco
 			}
 			res = append(res, &pb.Record{
 				Domain: hdr.Name,
-				Ttl: hdr.Ttl,
-				Class: cls,
-				Type: typ,
-				Data: data,
+				Ttl:    hdr.Ttl,
+				Class:  cls,
+				Type:   typ,
+				Data:   data,
 			})
 		}
 	}
@@ -343,10 +342,10 @@ func (s *dnsServer) GetZone(ctx context.Context, r *pb.GetZoneRequest) (*pb.GetZ
 func (s *dnsServer) Present(ctx context.Context, r *pbacme.PresentRequest) (*pbacme.PresentResponse, error) {
 	record := pb.Record{
 		Domain: r.Fqdn,
-		Ttl: r.Ttl,
-		Class: "IN",
-		Type: "TXT",
-		Data: r.Value,
+		Ttl:    r.Ttl,
+		Class:  "IN",
+		Type:   "TXT",
+		Data:   r.Value,
 	}
 	records := []*pb.Record{&record}
 	err := s.insertOrRemove(ctx, records, true)
@@ -359,7 +358,7 @@ func (s *dnsServer) Present(ctx context.Context, r *pbacme.PresentRequest) (*pba
 func (s *dnsServer) CleanUp(ctx context.Context, r *pbacme.CleanUpRequest) (*pbacme.CleanUpResponse, error) {
 	record := pb.Record{
 		Domain: r.Fqdn,
-		Type: "TXT",
+		Type:   "TXT",
 	}
 	records := []*pb.Record{&record}
 	err := s.insertOrRemove(ctx, records, false)
