@@ -204,15 +204,18 @@ func (s *dnsServer) insertOrRemove(ctx context.Context, records []*pb.Record, in
 		if err != nil {
 			return err
 		}
-		if len(r.Ns) == 0 {
+		result := append(r.Answer, r.Ns...)
+		if len(result) == 0 {
 			return fmt.Errorf("did not receive any authority for %s", record.Domain)
 		}
-		soa, ok := r.Ns[0].(*dns.SOA)
-		if !ok {
+		for _, r := range result {
+			if soa, ok := r.(*dns.SOA); ok {
+				log.Printf("SOA for %s: %s", record.Domain, soa.Hdr.Name)
+				soaMap[soa.Hdr.Name] = append(soaMap[soa.Hdr.Name], record)
+				break
+			}
 			return fmt.Errorf("did not receive SOA for %s", record.Domain)
 		}
-		log.Printf("SOA for %s: %s", record.Domain, soa.Hdr.Name)
-		soaMap[soa.Hdr.Name] = append(soaMap[soa.Hdr.Name], record)
 	}
 
 	// Create all messages first to catch validation errors before committing anything.
