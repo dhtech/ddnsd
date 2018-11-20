@@ -92,11 +92,13 @@ func (s *dnsServer) dnsRemoveRequest(soa string, records []*pb.Record) (*dns.Msg
 		if !ok {
 			return nil, fmt.Errorf("unknown type %s", record.Type)
 		}
-		class, _ := dns.StringToClass["ANY"]
-		h := dns.RR_Header{Name: record.Domain, Rrtype: rrtype, Class: class, Ttl: 0}
-		rrstr := h.String()
-		if len(record.Data) != 0 {
-			rrstr = fmt.Sprintf("%s %s", rrstr, record.Data)
+		rrstr := ""
+		if len(record.Data) == 0 {
+			h := dns.RR_Header{Name: record.Domain, Rrtype: rrtype, Class: dns.ClassANY, Ttl: 0}
+			rrstr = h.String()
+		} else {
+			h := dns.RR_Header{Name: record.Domain, Rrtype: rrtype, Class: dns.ClassNONE, Ttl: 0}
+			rrstr = fmt.Sprintf("%s %s", h.String(), record.Data)
 		}
 		rr, err := dns.NewRR(rrstr)
 		if err != nil {
