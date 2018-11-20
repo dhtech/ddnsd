@@ -70,7 +70,7 @@ func (s *dnsServer) dnsInsertRequest(soa string, records []*pb.Record) (*dns.Msg
 		}
 
 		h := dns.RR_Header{Name: record.Domain, Rrtype: rrtype, Class: class, Ttl: record.Ttl}
-		rr, err := dns.NewRR(h.String() + " " + record.Data)
+		rr, err := dns.NewRR(fmt.Sprintf("%s %s", h.String(), record.Data))
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +94,7 @@ func (s *dnsServer) dnsRemoveRequest(soa string, records []*pb.Record) (*dns.Msg
 		}
 		class, _ := dns.StringToClass["ANY"]
 		h := dns.RR_Header{Name: record.Domain, Rrtype: rrtype, Class: class, Ttl: 0}
-		rr, err := dns.NewRR(h.String())
+		rr, err := dns.NewRR(fmt.Sprintf("%s %s", h.String(), record.Data))
 		if err != nil {
 			return nil, err
 		}
