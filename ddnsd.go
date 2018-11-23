@@ -181,6 +181,15 @@ func (s *dnsServer) authorizePeer(r *pb.Record, peer *pkix.Name) bool {
 	return false
 }
 
+func findSOA(result []dns.RR) *dns.SOA {
+	for _, r := range result {
+		if soa, ok := r.(*dns.SOA); ok {
+			return soa
+		}
+	}
+	return nil
+}
+
 func (s *dnsServer) insertOrRemove(ctx context.Context, records []*pb.Record, insert bool) error {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
@@ -214,14 +223,12 @@ func (s *dnsServer) insertOrRemove(ctx context.Context, records []*pb.Record, in
 		if len(result) == 0 {
 			return fmt.Errorf("did not receive any authority for %s", record.Domain)
 		}
-		for _, r := range result {
-			if soa, ok := r.(*dns.SOA); ok {
-				log.Printf("SOA for %s: %s", record.Domain, soa.Hdr.Name)
-				soaMap[soa.Hdr.Name] = append(soaMap[soa.Hdr.Name], record)
-				break
-			}
+		soa := findSOA(result)
+		if soa == nil {
 			return fmt.Errorf("did not receive SOA for %s", record.Domain)
 		}
+		log.Printf("SOA for %s: %s", record.Domain, soa.Hdr.Name)
+		soaMap[soa.Hdr.Name] = append(soaMap[soa.Hdr.Name], record)
 	}
 
 	// Create all messages first to catch validation errors before committing anything.
